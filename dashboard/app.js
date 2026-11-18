@@ -503,6 +503,11 @@
       el('p', null,
         'This board is a model, not investment advice and not a prediction that any protocol will issue a ' +
         'token. Farm only what you can afford to lock, and claim only from links the protocol itself publishes.'
+      ),
+      el('p', null,
+        'The model sandbox above re-scores the board in this page only: change the growth weight, the ' +
+        'farmer share or the wallet count and watch the ranking move. The submitted board keeps the model ' +
+        'as it was run.'
       )
     );
   }
