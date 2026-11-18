@@ -507,7 +507,8 @@
       el('p', null,
         'The model sandbox above re-scores the board in this page only: change the growth weight, the ' +
         'farmer share or the wallet count and watch the ranking move. The submitted board keeps the model ' +
-        'as it was run.'
+        'as it was run. The snapshot holds 758 protocols; this board ranks the 197 that record no token ' +
+        'and are not a wrapped, staked or bridged product of one that trades.'
       )
     );
   }
