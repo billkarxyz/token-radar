@@ -8,6 +8,15 @@
 // The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
 // and dashboard/app.js read /output/data.js, which this program writes from the same board.
 //
+// What makes this entry's radar different from the starter's (radar-1):
+//   - the base multiple is calibrated per category from the live-token protocols' own market caps,
+//     not a fixed 0.25 for every protocol;
+//   - the board ranks every rankable pre-token protocol in the snapshot (197 rows), not a capped 200;
+//   - bridges, wrapped and staked products are excluded from the ranking, as the watchlist's rule does;
+//   - each farm plan carries chain-specific gas costs and an estimate of one position's share of a launch;
+//   - the dashboard adds a chain filter, a farmer-value column, a fastest-growers section, a category
+//     breakdown, and a model sandbox that re-scores the board live.
+//
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
 

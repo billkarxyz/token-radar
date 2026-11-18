@@ -343,6 +343,33 @@
     );
   }
 
+  // A category breakdown: each category's total implied value, protocol count and average multiple.
+  // It shows the calibration working: categories the market prices richly carry higher multiples.
+  function categoryBreakdown() {
+    var byCat = {};
+    DATA.rows.forEach(function (r) {
+      var c = r.category || 'Other';
+      if (!byCat[c]) byCat[c] = { name: c, count: 0, implied: 0, multiples: [] };
+      byCat[c].count += 1;
+      byCat[c].implied += impliedOf(r, DATA.model);
+      byCat[c].multiples.push(r.category_multiple);
+    });
+    var cats = Object.keys(byCat).map(function (k) { return byCat[k]; });
+    cats.sort(function (a, b) { return b.implied - a.implied; });
+    var top = cats.slice(0, 8);
+    var rows = top.map(function (c) {
+      var avg = c.multiples.reduce(function (s, m) { return s + m; }, 0) / c.multiples.length;
+      return el('div', null,
+        el('span', { text: c.name + ' (' + c.count + ')' }),
+        el('b', { text: fmtUsd(c.implied) + ' · x' + (Math.round(avg * 1000) / 1000) })
+      );
+    });
+    return el('div', null,
+      el('h3', { text: 'Implied value by category' }),
+      el('div', { class: 'calib' }, rows)
+    );
+  }
+
   function modelPanel() {
     var m = DATA.model;
     var calibCells = DATA.calibration.slice(0, 12).map(function (c) {
@@ -363,6 +390,7 @@
       el('p', { class: 'sub', text: 'The category multiple is the median market cap over TVL of the live-token protocols in the same category, recomputed from the snapshot on every run (the market median is ' + DATA.market_multiple + '). TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days.' }),
       el('h3', { text: 'Calibration by category' }),
       el('div', { class: 'calib' }, calibCells),
+      categoryBreakdown(),
       el('h3', { text: 'Model sandbox' }),
       el('div', { class: 'sandbox' },
         el('label', null, 'Growth weight', gw),
