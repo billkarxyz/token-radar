@@ -508,7 +508,9 @@
         'The model sandbox above re-scores the board in this page only: change the growth weight, the ' +
         'farmer share or the wallet count and watch the ranking move. The submitted board keeps the model ' +
         'as it was run. The snapshot holds 758 protocols; this board ranks the 197 that record no token ' +
-        'and are not a wrapped, staked or bridged product of one that trades.'
+        'and are not a wrapped, staked or bridged product of one that trades. ' +
+        'The watchlist is the floor: every protocol with at least $50M of TVL and no token on record. ' +
+        'The early radar adds the rest, every one the snapshot holds.'
       )
     );
   }
