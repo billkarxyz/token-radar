@@ -102,6 +102,15 @@ tbody tr[data-selected="true"] { background: var(--accent-soft); }
 .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .watch { display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; font-size: 10px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
 
+.movers { margin-bottom: var(--step-4); padding: var(--step-4) var(--step-5); display: grid; gap: var(--step-3); }
+.movers h2 { font-size: 16px; }
+.movers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--step-3); }
+.mover { display: grid; gap: 2px; padding: var(--step-3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-2); cursor: pointer; text-align: left; }
+.mover:hover { border-color: var(--accent); }
+.mover b { font-weight: 600; font-size: 14px; }
+.mover .growth { font-family: var(--font-num); font-size: 18px; font-weight: 600; color: var(--positive); }
+.mover .meta { color: var(--muted); font-size: 12px; }
+
 .model { margin-top: var(--step-4); padding: var(--step-5); display: grid; gap: var(--step-3); }
 .formula { font-family: var(--font-num); font-size: 13px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
 .formula b { color: var(--accent); font-weight: 600; }

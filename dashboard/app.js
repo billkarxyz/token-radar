@@ -239,6 +239,29 @@
     );
   }
 
+  // The five fastest-growing pre-token protocols by seven-day TVL change: the radar's early signal.
+  // A protocol growing fast with no token yet is the one a farmer wants to find first.
+  function topMovers() {
+    var movers = DATA.rows
+      .filter(function (r) { return r.change_7d !== null && r.change_7d !== undefined && r.change_7d > 0; })
+      .slice()
+      .sort(function (a, b) { return b.change_7d - a.change_7d || b.tvl_usd - a.tvl_usd; })
+      .slice(0, 5);
+    if (movers.length === 0) return null;
+    var cards = movers.map(function (r) {
+      return el('button', { class: 'mover', type: 'button', onclick: function () { openDetail(r.slug); } },
+        el('b', { text: r.name }),
+        el('span', { class: 'growth', text: fmtPct(r.change_7d) }),
+        el('span', { class: 'meta', text: 'TVL ' + fmtUsd(r.tvl_usd) + ' · rank ' + r.rank + ' · implied ' + fmtUsd(r.implied_value_usd) })
+      );
+    });
+    return el('section', { class: 'panel movers' },
+      el('h2', { text: 'Fastest growers: 7-day TVL change' }),
+      el('p', { class: 'sub', text: 'Pre-token protocols gaining TVL fastest. Growth is one input to implied value, not a promise of a launch.' }),
+      el('div', { class: 'movers-grid' }, cards)
+    );
+  }
+
   function boardTable() {
     var list = sortedRows(rows());
     if (list.length === 0) {
@@ -410,6 +433,7 @@
     shell.appendChild(header());
     shell.appendChild(lede());
     shell.appendChild(controls());
+    if (state.tab === 'pre-token') shell.appendChild(topMovers());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());
     app.appendChild(shell);
