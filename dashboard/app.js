@@ -490,6 +490,23 @@
     }
   }
 
+  // A footer naming the data's source, the model's version and the entry's limits, so a reader knows
+  // exactly what the board is and is not.
+  function footer() {
+    return el('footer', { class: 'foot' },
+      el('p', null,
+        'Data: DefiLlama protocol index, fetched ' + DATA.as_of + '. Model ' + DATA.model_version + ': ' +
+        'implied value is TVL times a category multiple calibrated from live-token protocols, adjusted for ' +
+        'seven-day growth, age with no token and chain count. A protocol that records no token may still ' +
+        'have one its DefiLlama record does not carry.'
+      ),
+      el('p', null,
+        'This board is a model, not investment advice and not a prediction that any protocol will issue a ' +
+        'token. Farm only what you can afford to lock, and claim only from links the protocol itself publishes.'
+      )
+    );
+  }
+
   function render() {
     app.textContent = '';
     var shell = el('div', { class: 'shell' });
@@ -499,6 +516,7 @@
     if (state.tab === 'pre-token') shell.appendChild(topMovers());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());
+    shell.appendChild(footer());
     app.appendChild(shell);
     app.setAttribute('aria-busy', 'false');
     if (!dialog.isConnected) app.appendChild(dialog);

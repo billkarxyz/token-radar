@@ -156,6 +156,9 @@ tbody tr[data-selected="true"] { background: var(--accent-soft); }
 .value-callout b { font-family: var(--font-num); font-size: 18px; color: var(--accent); }
 .value-callout span { color: var(--muted); font-size: 12px; }
 
+.foot { margin-top: var(--step-6); padding-top: var(--step-4); border-top: 1px solid var(--border); display: grid; gap: var(--step-2); }
+.foot p { color: var(--muted); font-size: 12px; max-width: 80ch; }
+
 @media (max-width: 900px) {
   .shell { padding: var(--step-4); }
   .lede { grid-template-columns: 1fr; gap: var(--step-4); }
