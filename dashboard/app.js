@@ -117,8 +117,10 @@
     var hold = holdDaysFor(p.age_days);
     var gas = gasFor(chain);
     var value = farmerOf(p.implied_value_usd);
+    var chainList = (p.chains || []).length > 1 ? ' It also runs on ' + (p.chains || []).slice(1, 3).join(', ') + '.' : '';
     return [
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'nothing to create, and never share the seed phrase', time: '5 minutes' },
+      { text: "Read " + p.name + "'s own docs for one page on how its points or rewards work, so you farm what it actually counts." + chainList, cost: 'nothing but the reading', time: '10 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and ' + gas, time: '15 minutes to set up' },
       { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote, so the wallet shows steady use.', cost: gas + ' a week', time: '10 minutes a week' },
       { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },

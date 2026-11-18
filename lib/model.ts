@@ -420,7 +420,7 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
 }
 
 /**
- * A protocol's farm plan: seven steps, each an action with a cost and a time. The plan is derived from
+ * A protocol's farm plan: eight steps, each an action with a cost and a time. The plan is derived from
  * the protocol's own record (category, chains, TVL, age, implied value), never from a hand-written list
  * of names. The last step states what the position could be worth if the protocol launches a token.
  */
@@ -431,11 +431,17 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, implied: numb
   const action = actionFor(p, capital, chain);
   const gas = gasFor(chain);
   const value = farmerValue(implied, model);
+  const chainList = p.chains.length > 1 ? ` It also runs on ${p.chains.slice(1, 3).join(', ')}.` : '';
   return [
     {
       text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
       cost: 'nothing to create, and never share the seed phrase',
       time: '5 minutes',
+    },
+    {
+      text: `Read ${p.name}'s own docs for one page on how its points or rewards work, so you farm what it actually counts.${chainList}`,
+      cost: 'nothing but the reading',
+      time: '10 minutes',
     },
     {
       text: action,
