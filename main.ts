@@ -1,21 +1,27 @@
 // A token-radar-01 entry (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// pre-token protocol with the calibrated model in lib/model.ts, writes the ranked board to
+// pre-token protocol with the fitted model in dashboard/0-model.js (radar-3), writes the ranked board to
 // /output/board.json, and copies this repository's dashboard/ and screenshots/ to /output. Last, it
 // writes /output/dossier.json, the summary the judge reads, with the vendored make.fun library.
 //
-// The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
-// and dashboard/app.js read /output/data.js, which this program writes from the same board.
+// The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css,
+// dashboard/app.js and dashboard/0-model.js read /output/data.js, which this program writes from the
+// same snapshot. The page refits the model itself over that data and checks every number board.json
+// carries, so the page's code and the board's data are visibly the same arithmetic.
 //
-// What makes this entry's radar different from the starter's (radar-1):
-//   - the base multiple is calibrated per category from the live-token protocols' own market caps,
-//     not a fixed 0.25 for every protocol;
-//   - the board ranks every rankable pre-token protocol in the snapshot (197 rows), not a capped 200;
-//   - bridges, wrapped and staked products are excluded from the ranking, as the watchlist's rule does;
-//   - each farm plan carries chain-specific gas costs and an estimate of one position's share of a launch;
-//   - the dashboard adds a chain filter, a farmer-value column, a fastest-growers section, a category
-//     breakdown, and a model sandbox that re-scores the board live.
+// What makes this entry's radar different from the starter's (radar-1) and from radar-2:
+//   - the value model is fitted, not calibrated by hand: a base multiple plus a size curve plus a
+//     ridge-shrunk category effect, each candidate term kept only when it lowers the held-out miss
+//     in BOTH leave-one-out and walk-forward tests, with a control term that must not help;
+//   - the token odds come from the peers' record: the share of comparable protocols that record a
+//     token by each age, Brier-scored held-out against the base rate, never a forecast;
+//   - every row carries bootstrap intervals (200 refits) and a rank range, and the page prints a
+//     coverage table that says whether those ranges are honest;
+//   - the board accounts for every one of the snapshot's 758 protocols in exactly one group, and
+//     the page's integrity strip recomputes the board and checks its totals and checksum;
+//   - each farm verdict is costed: a modelled drop net of the plan's own fees, against a 4% T-bill
+//     and a $25-an-hour bar, with a 10-step plan carrying a cost and a time per step.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -50,7 +56,7 @@ if (!existsSync(inputFile)) {
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
 const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const { board, radar } = buildRadar(snapshot);
+const { board, radar, stats } = buildRadar(snapshot);
 const issue = boardIssue(board, snapshot);
 if (issue !== null) {
   process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
@@ -93,7 +99,9 @@ for (const name of shots) {
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
 process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
-    `token radar: market multiple ${radar.market_multiple}, ${radar.calibration.length} categories calibrated\n` +
-    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
+  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${stats.comps} priced comps, ${stats.peers} odds peers)\n` +
+    `token radar: value terms kept: ${(stats.valueKept as string[]).join(', ') || 'none'}; odds terms kept: ${(stats.oddsKept as string[]).join(', ') || 'none'}\n` +
+    `token radar: held-out miss walk-forward x${(stats.valueWf as number).toFixed(2)} (leave-one-out x${(stats.valueLoo as number).toFixed(2)}); odds Brier walk-forward ${(stats.oddsWf as number).toFixed(3)}\n` +
+    `token radar: verdicts ${JSON.stringify(stats.verdictCounts)}; total implied $${(stats.totalImplied as number).toLocaleString('en-US')}; checksum ${stats.checksum}\n` +
+    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (4 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
