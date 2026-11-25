@@ -1,4 +1,4 @@
-// Launch Radar's model (radar-3), shared by main.ts and the dashboard page.
+// Launch Radar's model (radar-4), shared by main.ts and the dashboard page.
 //
 // One file, no imports, no network: main.ts runs it in Node to write board.json, and the page runs
 // the same code in the browser over the same snapshot, so the page refits the model itself and checks
@@ -12,10 +12,11 @@
 
 'use strict';
 
-var MODEL_VERSION = 'radar-3';
+var MODEL_VERSION = 'radar-4';
 var BOOTSTRAPS = 200;
 var SEED = 20261114;
-var TBILL_RATE = 0.04; // the T-bill benchmark, 4% a year
+var TBILL_RATE = 0.04; // the T-bill benchmark, 4% a year, shown against every verdict
+var CAPITAL_RATE = 0.02; // the capital charge, 2% a year: what locking the deposit costs
 var FARM_NET_HOUR = 25; // a farm must beat $25 an hour of hands-on work
 var PARENT_FACTOR = 0.5; // STATED ASSUMPTION, not a fitted term: a parent that already records a
 // token would split the family's value, so an off-list protocol's implied value is halved.
@@ -25,15 +26,32 @@ var RIDGE_FAMILY = 16; // pseudo-observations shrinking the family effect
 var RIDGE_CATEGORY = 64; // pseudo-observations shrinking the category effect
 var SHRINK_M = 8; // pseudo-observations shrinking an odds subset rate toward its parent rate
 var WF_MIN_TRAIN = 20; // a walk-forward prediction needs 20 earlier protocols to train on
+var RATIO_CAP = 50; // a priced comp's market cap is at most 50x its TVL; above that is a data quirk
+var DEP_MIN = 1000, DEP_MAX = 25000; // the plan deposit's bounds: the smallest that pays, capped
 
-// The watchlist's own exclusion rule, minus the parent check the snapshot cannot show.
-var EXCLUDED_CATEGORIES = {
-  Bridge: 1, 'Canonical Bridge': 1, 'Cross Chain Bridge': 1,
-  'Liquid Staking': 1, 'Liquid Restaking': 1, 'Restaked BTC': 1, CEX: 1,
-};
-var VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
-var WRAPPED_OR_STAKED = /\b(wrapped|staked|staking)\b/i;
-var EXCHANGE_PREFIX = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/i;
+// The exclusion taxonomy, applied to EVERY protocol first, in this order, so the ledger accounts
+// for all 758 in exactly one group: a bridge is a bridge whether or not it records a token.
+// Bridge covers the Bridge and Canonical Bridge categories; staked form the three liquid-staking
+// categories; exchange the CEX category; versioned a name ending in a version (V1, v2, 2.0, II);
+// wrapped a stablecoin wrapper or a wrapped name; kin a pre-token protocol sharing its first word
+// (4+ letters) with a protocol that records a token — the same project's family. The watchlist
+// overrides every exclusion: a protocol the house list names is ranked, never set aside — the
+// gate requires every watchlist slug on the board, and Saturn (a stablecoin wrapper) is on it.
+var VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+|II|III|IV)$/;
+var WRAPPED_NAME = /\bwrapped\b/i;
+var W_PREFIX = /^w[A-Z]/;
+function firstWord(name) {
+  var w = (name || '').split(/[\s\-:]+/)[0] || '';
+  return w.length >= 4 ? w.toLowerCase() : '';
+}
+// The kin context: the first words of the protocols that record a token, and the watchlist.
+function kinContext(snapshot) {
+  var tokenFirst = {}, wl = {};
+  snapshot.protocols.forEach(function (p) { if (!isPreToken(p)) { var w = firstWord(p.name); if (w) tokenFirst[w] = 1; } });
+  snapshot.watchlist.forEach(function (s) { wl[s] = 1; });
+  return { tokenFirst: tokenFirst, watchlist: wl };
+}
+function isPreToken(p) { return p.mcap_usd === null && p.gecko_id === null && p.symbol === null; }
 
 // Categories grouped into families: the odds model's family term and the detail page's tag.
 var FAMILY_OF = {
@@ -128,33 +146,37 @@ function ageYears(asOf, listedAt) {
   var d = ageDays(asOf, listedAt);
   return d === null ? null : d / 365.25;
 }
-function isPreToken(p) { return p.mcap_usd === null && p.gecko_id === null && p.symbol === null; }
-// The watchlist's exclusion reason, or null: bridge, liquid staking, exchange, versioned/wrapped.
-function exclusionReason(p) {
-  if (p.category && (p.category === 'Bridge' || p.category === 'Canonical Bridge' || p.category === 'Cross Chain Bridge')) return 'bridge';
-  if (p.category && (p.category === 'Liquid Staking' || p.category === 'Liquid Restaking' || p.category === 'Restaked BTC')) return 'liquid-staking';
-  if (p.category === 'CEX' || EXCHANGE_PREFIX.test(p.name)) return 'exchange';
-  if (VERSIONED.test(p.name) || WRAPPED_OR_STAKED.test(p.name)) return 'versioned-wrapped';
+// The exclusion reason, or null. ctx is kinContext(snapshot); without one, kin never triggers.
+function exclusionReason(p, ctx) {
+  var c = p.category || '';
+  if (c === 'Bridge' || c === 'Canonical Bridge') return 'bridge';
+  if (c === 'Liquid Staking' || c === 'Liquid Restaking' || c === 'Restaked BTC') return 'staked';
+  if (c === 'CEX') return 'exchange';
+  if (VERSIONED.test(p.name)) return 'versioned';
+  if (c === 'Stablecoin Wrapper' || WRAPPED_NAME.test(p.name) || W_PREFIX.test(p.name)) return 'wrapped';
+  if (ctx && isPreToken(p) && !ctx.watchlist[p.slug] && ctx.tokenFirst[firstWord(p.name)]) return 'kin';
   return null;
 }
-function isRankable(p) { return isPreToken(p) && exclusionReason(p) === null; }
+function isRankable(p, ctx) { return isPreToken(p) && exclusionReason(p, ctx) === null; }
 
-// Every protocol in exactly one group. The off-list tier is derived, not listed: a rankable
+// Every protocol in exactly one group. Exclusions come first, so a versioned bridge with a token
+// is versioned-or-bridge, never a comp. The off-list tier is derived, not listed: a rankable
 // protocol above the floor that the watchlist does not name passes every stated rule, so the one
 // rule the snapshot cannot show — the parent check — is what left it out: its parent records a token.
 function partition(snapshot) {
-  var wl = {};
-  snapshot.watchlist.forEach(function (s) { wl[s] = 1; });
-  var g = { watchlist: [], early: [], offlist: [], priced: [], tokenNoCap: [], out: { bridge: [], 'liquid-staking': [], exchange: [], 'versioned-wrapped': [] } };
+  var ctx = kinContext(snapshot);
+  var wl = ctx.watchlist;
+  var g = { watchlist: [], early: [], offlist: [], priced: [], tokenNoCap: [],
+    out: { bridge: [], staked: [], exchange: [], versioned: [], wrapped: [], kin: [] } };
   snapshot.protocols.forEach(function (p) {
+    if (wl[p.slug] && isPreToken(p)) { g.watchlist.push(p); return; }
+    var reason = exclusionReason(p, ctx);
+    if (reason) { g.out[reason].push(p); return; }
     if (!isPreToken(p)) {
-      if (isPricedComp(p)) g.priced.push(p); else g.tokenNoCap.push(p);
+      if (isPricedComp(p, ctx)) g.priced.push(p); else g.tokenNoCap.push(p);
       return;
     }
-    var reason = exclusionReason(p);
-    if (reason) { g.out[reason].push(p); return; }
-    if (wl[p.slug]) g.watchlist.push(p);
-    else if (p.tvl_usd >= snapshot.floor_usd) g.offlist.push(p);
+    if (p.tvl_usd >= snapshot.floor_usd) g.offlist.push(p);
     else g.early.push(p);
   });
   return g;
@@ -165,19 +187,20 @@ function tierOf(snapshot, p) {
   return 'early';
 }
 
-// A priced comp for the value fit: its token trades, the ratio is usable, it has a listing date
-// (walk-forward needs one), and its category is one the board ranks.
-function isPricedComp(p) {
+// A priced comp for the value fit: its token trades, the ratio is usable, and its category is one
+// the board ranks. No listing date is required: the fit and leave-one-out do not need one, and
+// walk-forward runs on the dated subset. Ratios above 50x are data quirks, not comps.
+function isPricedComp(p, ctx) {
   if (p.mcap_usd === null || p.tvl_usd <= 0) return false;
   var ratio = p.mcap_usd / p.tvl_usd;
-  if (!isFinite(ratio) || ratio <= 0 || ratio > 10) return false;
-  if (!p.listed_at) return false;
-  return exclusionReason(p) === null;
+  if (!isFinite(ratio) || ratio <= 0 || ratio > RATIO_CAP) return false;
+  return exclusionReason(p, ctx) === null;
 }
-function compsOf(snapshot) { return snapshot.protocols.filter(isPricedComp); }
+function compsOf(snapshot) { var ctx = kinContext(snapshot); return snapshot.protocols.filter(function (p) { return isPricedComp(p, ctx); }); }
 // The odds peers: every protocol the token question applies to, with a listing date to age it by.
 function peersOf(snapshot) {
-  return snapshot.protocols.filter(function (p) { return exclusionReason(p) === null && p.listed_at; });
+  var ctx = kinContext(snapshot);
+  return snapshot.protocols.filter(function (p) { return exclusionReason(p, ctx) === null && p.listed_at; });
 }
 
 // --- the value model ------------------------------------------------------
@@ -185,10 +208,14 @@ function peersOf(snapshot) {
 // log market cap on log TVL, terms added in order on the residuals of the model before them. A term
 // is kept only when it lowers the typical held-out miss in BOTH leave-one-out and walk-forward tests.
 
-var VALUE_TERMS = ['size', 'family', 'category', 'growth', 'age', 'chains'];
+var VALUE_TERMS = ['size', 'family', 'category', 'chains', 'growth', 'age', 'carry'];
 
 function growthOf(p) { return clamp(finite(p.change_7d, 0), -60, 120) / 100; }
 function chainsLn(p) { return Math.log(Math.max(1, p.chains.length)); }
+function ageLog(asOf, p) { var y = ageYears(asOf, p.listed_at); return Math.log(1 + (y === null ? 0 : y)); }
+// Carry: one more week of this protocol's 7-day change beyond the market's own (the comps'
+// median weekly change), held to +/-25%. A protocol outrunning its market carries forward.
+function carryOf(p, marketGrowth) { return clamp(growthOf(p) - marketGrowth, -0.25, 0.25); }
 
 // The control term: the growth of the next comp in slug order (wrapping). It carries no signal
 // about this row, so a model that improves on it is fitting noise.
@@ -200,7 +227,8 @@ function fitValue(comps, asOf, terms) {
   var xs = comps.map(function (p) { return Math.log(p.tvl_usd); });
   var logRatio = comps.map(function (p, i) { return ys[i] - xs[i]; });
   var sorted = logRatio.slice().sort(function (a, b) { return a - b; });
-  var model = { medianLogRatio: median(sorted), size: null, family: {}, category: {}, growth: 0, age: 0, chains: 0, control: 0, terms: terms.slice() };
+  var growths = comps.map(growthOf).sort(function (a, b) { return a - b; });
+  var model = { medianLogRatio: median(sorted), marketGrowth: median(growths), size: null, family: {}, category: {}, growth: 0, age: 0, chains: 0, carry: 0, control: 0, terms: terms.slice() };
   var pred = xs.map(function (x) { return x + model.medianLogRatio; });
   function resid() { return ys.map(function (y, i) { return y - pred[i]; }); }
   if (terms.indexOf('size') >= 0) {
@@ -233,8 +261,9 @@ function fitValue(comps, asOf, terms) {
     pred = pred.map(function (v, i) { return v + coef * values[i]; });
   }
   if (terms.indexOf('growth') >= 0) linearTerm('growth', comps.map(growthOf));
-  if (terms.indexOf('age') >= 0) linearTerm('age', comps.map(function (p) { return ageYears(asOf, p.listed_at) || 0; }));
+  if (terms.indexOf('age') >= 0) linearTerm('age', comps.map(function (p) { return ageLog(asOf, p); }));
   if (terms.indexOf('chains') >= 0) linearTerm('chains', comps.map(chainsLn));
+  if (terms.indexOf('carry') >= 0) linearTerm('carry', comps.map(function (p) { return carryOf(p, model.marketGrowth); }));
   if (terms.indexOf('control') >= 0) linearTerm('control', comps.map(function (p, i) { return controlGrowthOf(comps, i); }));
   model.resid = resid();
   return model;
@@ -246,8 +275,9 @@ function predictValue(model, p, asOf, controlGrowth) {
   v += model.family[familyOf(p.category)] || 0;
   v += model.category[p.category || 'Other'] || 0;
   v += model.growth * growthOf(p);
-  v += model.age * (ageYears(asOf, p.listed_at) || 0);
+  v += model.age * ageLog(asOf, p);
   v += model.chains * chainsLn(p);
+  v += model.carry * carryOf(p, model.marketGrowth);
   if (controlGrowth !== undefined) v += model.control * controlGrowth;
   return Math.exp(v); // the median held-out cap at this TVL
 }
@@ -272,18 +302,20 @@ function looValue(comps, asOf, terms) {
   }
   return { miss: typicalMiss(misses), preds: preds, misses: misses };
 }
+// Walk-forward runs on the dated comps only: a comp without a listing date cannot be ordered.
 function wfValue(comps, asOf, terms) {
-  var order = comps.map(function (p, i) { return i; }).sort(function (a, b) {
-    return (comps[a].listed_at || '').localeCompare(comps[b].listed_at || '') || (comps[a].slug < comps[b].slug ? -1 : 1);
+  var dated = comps.filter(function (p) { return p.listed_at; });
+  var order = dated.map(function (p, i) { return i; }).sort(function (a, b) {
+    return (dated[a].listed_at || '').localeCompare(dated[b].listed_at || '') || (dated[a].slug < dated[b].slug ? -1 : 1);
   });
   var misses = [], preds = {};
   for (var k = WF_MIN_TRAIN; k < order.length; k++) {
-    var train = order.slice(0, k).map(function (i) { return comps[i]; });
+    var train = order.slice(0, k).map(function (i) { return dated[i]; });
     var m = fitValue(train, asOf, terms);
     var idx = order[k];
-    var pred = predictValue(m, comps[idx], asOf, controlGrowthOf(comps, idx));
-    preds[idx] = pred;
-    misses.push(Math.exp(Math.abs(Math.log(pred) - Math.log(comps[idx].mcap_usd))));
+    var pred = predictValue(m, dated[idx], asOf, controlGrowthOf(dated, idx));
+    preds[comps.indexOf(dated[idx])] = pred;
+    misses.push(Math.exp(Math.abs(Math.log(pred) - Math.log(dated[idx].mcap_usd))));
   }
   return { miss: typicalMiss(misses), preds: preds, misses: misses, n: misses.length };
 }
@@ -308,7 +340,8 @@ function selectValueTerms(comps, asOf) {
 }
 function valueTermLabel(t) {
   return { size: 'size curve, ln TVL', family: 'family effect, ridge 16', category: 'category effect, ridge 64',
-    growth: '7-day TVL growth', age: 'age, years listed', chains: 'chain count, ln' }[t] || t;
+    growth: '7-day TVL growth', age: 'age, years listed (log)', chains: 'chain count, ln',
+    carry: 'carry: 7-day change beyond the market' }[t] || t;
 }
 
 // Coverage honesty: the interval for a held-out prediction is the bootstrap's relative range
@@ -451,16 +484,29 @@ function wfOdds(peers, asOf, terms) {
   }
   return { n: preds.length, brier: brierOf(preds, actuals).brier, right: brierOf(preds, actuals).right };
 }
+// Ten-fold validation: peers split by slug order into ten folds, each fold predicted by a fit on
+// the other nine. A third check on the odds, reported alongside leave-one-out and walk-forward.
+function tenFoldOdds(peers, asOf, terms) {
+  var order = peers.map(function (p, i) { return i; }).sort(function (a, b) { return peers[a].slug < peers[b].slug ? -1 : 1; });
+  var preds = new Array(peers.length), actuals = new Array(peers.length);
+  for (var f = 0; f < 10; f++) {
+    var test = order.filter(function (idx, k) { return k % 10 === f; });
+    var train = order.filter(function (idx, k) { return k % 10 !== f; }).map(function (i) { return peers[i]; });
+    var m = fitOdds(train, asOf, terms);
+    test.forEach(function (i) { preds[i] = m.rateAt(peers[i]); actuals[i] = isPreToken(peers[i]) ? 0 : 1; });
+  }
+  return brierOf(preds, actuals);
+}
 function selectOddsTerms(peers, asOf) {
   var kept = [];
-  var base = { loo: looOdds(peers, asOf, []), wf: wfOdds(peers, asOf, []) };
-  var rows = [{ name: 'base rate of peers', loo: base.loo, wf: base.wf, verdict: 'baseline' }];
+  var base = { loo: looOdds(peers, asOf, []), ten: tenFoldOdds(peers, asOf, []), wf: wfOdds(peers, asOf, []) };
+  var rows = [{ name: 'base rate of peers', loo: base.loo, ten: base.ten, wf: base.wf, verdict: 'baseline' }];
   var cur = { loo: base.loo, wf: base.wf };
   ODDS_TERMS.forEach(function (t) {
     var trial = kept.concat([t]);
-    var loo = looOdds(peers, asOf, trial), wf = wfOdds(peers, asOf, trial);
+    var loo = looOdds(peers, asOf, trial), ten = tenFoldOdds(peers, asOf, trial), wf = wfOdds(peers, asOf, trial);
     var improves = loo.brier < cur.loo.brier && wf.brier < cur.wf.brier;
-    rows.push({ name: '+ ' + oddsTermLabel(t), loo: loo, wf: wf, verdict: improves ? 'kept' : 'tested, not kept' });
+    rows.push({ name: '+ ' + oddsTermLabel(t), loo: loo, ten: ten, wf: wf, verdict: improves ? 'kept' : 'tested, not kept' });
     if (improves) { kept = trial; cur = { loo: loo, wf: wf }; }
   });
   // The control: the family of another row (the next peer in slug order) must not help.
@@ -470,9 +516,11 @@ function selectOddsTerms(peers, asOf) {
     return q;
   });
   var ctrlLoo = looOdds(ctrlPeers, asOf, kept.concat(['family']));
+  var ctrlTen = tenFoldOdds(ctrlPeers, asOf, kept.concat(['family']));
   var ctrlWf = wfOdds(ctrlPeers, asOf, kept.concat(['family']));
-  rows.push({ name: '+ control: family of another row', loo: ctrlLoo, wf: ctrlWf, verdict: 'must not help' });
-  return { kept: kept, rows: rows, loo: cur.loo.brier, wf: cur.wf.brier, looRight: cur.loo.right, wfRight: cur.wf.right };
+  rows.push({ name: '+ control: family of another row', loo: ctrlLoo, ten: ctrlTen, wf: ctrlWf, verdict: 'must not help' });
+  var keptTen = tenFoldOdds(peers, asOf, kept);
+  return { kept: kept, rows: rows, loo: cur.loo.brier, ten: keptTen.brier, tenRight: keptTen.right, wf: cur.wf.brier, looRight: cur.loo.right, wfRight: cur.wf.right };
 }
 function oddsTermLabel(t) {
   return { age: 'age, years listed', family: 'family effect', size: 'size curve, ln TVL',
@@ -549,30 +597,55 @@ function withAgeFallback(p, medianAgeYears, asOf) {
 //
 // One scenario drives every verdict: a deposit, a drop share, a horizon. The modelled drop is the
 // value if a token launches, times the drop share, times the deposit's share of TVL, times the
-// token odds. Fees are the plan's own costs. FARM beats a 4% T-bill and $25 an hour; SKIP loses
-// money on fees; the rest are MARGINAL. Yield earned meanwhile is left out, and the page says so.
+// token odds. The net subtracts the plan's own fees AND a 2%-a-year capital charge for locking
+// the deposit. FARM clears $25 an hour of hands-on work; MARGINAL is positive under it; SKIP
+// loses money. The T-bill is shown as a benchmark, not a bar. Yield earned meanwhile is left
+// out, and the page says so.
+//
+// The farm is sized on the P25 value, not the median: the held-out P25 factor is the 25th
+// percentile of the leave-one-out log-residuals, exponentiated — the value 3 in 4 comps traded
+// above, relative to the model's prediction. The odds stay as the expectation — only the value
+// takes the conservative quartile, because a 12-week capital lock should not be sized on a coin
+// flip. The board still ranks on the median; the farm is a different question from the ranking.
+//
+// The plan deposit is sized to the farm, not fixed: the smallest deposit (rounded up to $100,
+// between $1,000 and $25,000) whose net clears $25 an hour. Where no deposit in range clears
+// it, the plan takes the cap when a bigger deposit helps and the floor when it does not.
 
-var DEFAULT_SCENARIO = { deposit: 'plan', dropShare: 0.07, weeks: 12 };
-function planDeposit(p) { return clamp(0.0002 * p.tvl_usd, 100, 10000); }
+var DEFAULT_SCENARIO = { deposit: 'plan', dropShare: 0.10, weeks: 12 };
 function feesFor(p, weeks) {
   return 2 * WITHDRAWAL_USD + (6 + weeks) * gasFor(p.chains[0]);
 }
 function hoursFor(weeks) { return (70 + 10 * weeks) / 60; }
+function capitalCharge(deposit, weeks) { return deposit * CAPITAL_RATE * (weeks / 52); }
+// The value the farm is sized on: the P25 value when the build provides one, else the median.
+function farmValueOf(row) { return row.farmValue || row.valueIfLaunches; }
+function sizedDeposit(row, scenario) {
+  // The drop per dollar deposited, k, against the capital charge per dollar, c. Net is linear in
+  // the deposit, so the smallest deposit clearing $25 an hour is exact arithmetic, not a search.
+  var k = farmValueOf(row) * scenario.dropShare * row.odds / row.p.tvl_usd;
+  var c = CAPITAL_RATE * (scenario.weeks / 52);
+  if (k <= c) return DEP_MIN;
+  var need = (FARM_NET_HOUR * hoursFor(scenario.weeks) + feesFor(row.p, scenario.weeks)) / (k - c);
+  return clamp(Math.ceil(need / 100) * 100, DEP_MIN, DEP_MAX);
+}
 function verdictFor(row, scenario, exitPct) {
-  var deposit = scenario.deposit === 'plan' ? planDeposit(row.p) : scenario.deposit;
-  var dropNoOdds = row.valueIfLaunches * scenario.dropShare * (deposit / row.p.tvl_usd);
+  var deposit = scenario.deposit === 'plan' ? sizedDeposit(row, scenario) : scenario.deposit;
+  var dropNoOdds = farmValueOf(row) * scenario.dropShare * (deposit / row.p.tvl_usd);
   var drop = dropNoOdds * row.odds;
   var fees = feesFor(row.p, scenario.weeks);
+  var capCharge = capitalCharge(deposit, scenario.weeks);
   var hours = hoursFor(scenario.weeks);
-  var net = drop - fees;
+  var net = drop - fees - capCharge;
   var tbill = deposit * TBILL_RATE * (scenario.weeks / 52);
   var netHour = net / hours;
-  var verdict = net > tbill && netHour > FARM_NET_HOUR ? 'FARM' : net <= 0 ? 'SKIP' : 'MARGINAL';
+  var verdict = netHour >= FARM_NET_HOUR ? 'FARM' : net > 0 ? 'MARGINAL' : 'SKIP';
+  var costs = fees + capCharge;
   return {
-    deposit: deposit, drop: drop, dropNoOdds: dropNoOdds, fees: fees, hours: hours,
+    deposit: deposit, drop: drop, dropNoOdds: dropNoOdds, fees: fees, capCharge: capCharge, hours: hours,
     net: net, tbill: tbill, netHour: netHour, verdict: verdict,
-    breakEvenShare: dropNoOdds * row.odds === 0 ? 1 : fees / (dropNoOdds * row.odds) * scenario.dropShare,
-    breakEvenOdds: dropNoOdds === 0 ? 1 : fees / dropNoOdds,
+    breakEvenShare: drop * scenario.dropShare === 0 ? 1 : costs / drop * scenario.dropShare,
+    breakEvenOdds: dropNoOdds === 0 ? 1 : costs / dropNoOdds,
     exitTvl: row.p.tvl_usd * (1 + exitPct / 100),
   };
 }
@@ -588,6 +661,20 @@ function money(n) {
 // the page shows them as written. Only the live verdict math — fees, hours, net — is shared.
 
 // --- the build ------------------------------------------------------------
+
+// Spearman rank correlation between two arrays of the same length.
+function ranksOf(xs) {
+  var order = xs.map(function (v, i) { return i; }).sort(function (a, b) { return xs[a] - xs[b] || (a - b); });
+  var r = new Array(xs.length);
+  order.forEach(function (i, k) { r[i] = k; });
+  return r;
+}
+function pearson(xs, ys) {
+  var n = xs.length, mx = mean(xs), my = mean(ys), a = 0, b = 0, c = 0;
+  for (var i = 0; i < n; i++) { var dx = xs[i] - mx, dy = ys[i] - my; a += dx * dy; b += dx * dx; c += dy * dy; }
+  return b === 0 || c === 0 ? 0 : a / Math.sqrt(b * c);
+}
+function spearman(xs, ys) { return pearson(ranksOf(xs), ranksOf(ys)); }
 
 function buildRadar(snapshot) {
   var asOf = snapshot.as_of;
@@ -605,8 +692,10 @@ function buildRadar(snapshot) {
   var oddsSel = selectOddsTerms(peers, asOf);
   var oddsModel = fitOdds(peers, asOf, oddsSel.kept);
   // The leave-one-out log-residuals: the bootstrap draws from these so its intervals are
-  // prediction intervals, carrying the scatter of real caps around the model.
+  // prediction intervals, carrying the scatter of real caps around the model. Their P25 is the
+  // farm's value factor: the value 3 in 4 held-out comps traded above, relative to prediction.
   var looResiduals = valueSel.looPreds.map(function (pr, i) { return Math.log(comps[i].mcap_usd) - Math.log(pr); });
+  var farmValueFactor = Math.exp(percentile(looResiduals.slice().sort(function (a, b) { return a - b; }), 0.25));
   var boot = bootstrap(comps, peers, ranked, asOf, valueSel.kept, oddsSel.kept, medianAgeYears, looResiduals);
 
   // Score every ranked row with the full fits.
@@ -616,6 +705,7 @@ function buildRadar(snapshot) {
     var implied = Math.max(1, Math.round(v * o.odds * r.parentFactor));
     return {
       p: r.p, tier: r.tier, parentFactor: r.parentFactor, valueIfLaunches: v, odds: o.odds,
+      farmValue: v * farmValueFactor,
       rateByAge: o.rateByAge, rateOldest: o.rateOldest, implied: implied,
       p25: Math.max(1, Math.round(boot.rows[i].p25)), p75: Math.max(1, Math.round(boot.rows[i].p75)),
       p10: Math.max(1, Math.round(boot.rows[i].p10)), p90: Math.max(1, Math.round(boot.rows[i].p90)),
@@ -641,6 +731,18 @@ function buildRadar(snapshot) {
   var wfCov2575 = coverageOf(wfPreds, wfActuals, at(rel25), at(rel75), missesOf(wfPreds, wfActuals));
   var wfCov1090 = coverageOf(wfPreds, wfActuals, at(rel10), at(rel90), missesOf(wfPreds, wfActuals));
 
+  // The rank evidence: blind (leave-one-out) predictions against real caps, and how far the
+  // fitted tilts move ranks off a flat multiple of TVL. The band is the median P25-P75 relative
+  // range, for the scatter plot.
+  var rankCorr = spearman(valueSel.looPreds, actuals);
+  var band = { lo: median(rel25.slice().sort(function (a, b) { return a - b; })), hi: median(rel75.slice().sort(function (a, b) { return a - b; })) };
+  var flatExp = Math.exp(valueModel.medianLogRatio);
+  var flatRank = {};
+  scored.map(function (s) { return { slug: s.p.slug, v: flatExp * s.p.tvl_usd * s.odds * s.parentFactor }; })
+    .sort(function (a, b) { return b.v - a.v || (a.slug < b.slug ? -1 : 1); })
+    .forEach(function (r, i) { flatRank[r.slug] = i + 1; });
+  var tiltsMoved = scored.filter(function (s) { return Math.abs(s.rank - flatRank[s.p.slug]) >= 5; }).length;
+
   // The exit rule's threshold: the 5th percentile of 7-day change across the ranked rows.
   var changes = scored.map(function (s) { return s.p.change_7d; }).filter(function (c) { return c !== null; }).sort(function (a, b) { return a - b; });
   var exitPct = percentile(changes, 0.05);
@@ -650,6 +752,7 @@ function buildRadar(snapshot) {
   scored.forEach(function (s) {
     var v = verdictFor(s, scenario, exitPct);
     s.verdict = v.verdict; s.net = v.net; s.netHour = v.netHour; s.drop = v.drop; s.fees = v.fees;
+    s.deposit = v.deposit; s.breakEvenOdds = v.breakEvenOdds; s.breakEvenShare = v.breakEvenShare; s.capCharge = v.capCharge;
     verdictCounts[v.verdict]++;
   });
 
@@ -661,10 +764,12 @@ function buildRadar(snapshot) {
       n: comps.length, nWf: wfIdx.length, rows: valueSel.rows,
       kept: valueSel.kept.length, total: VALUE_TERMS.length,
       loo: valueSel.loo, wf: valueSel.wf,
+      rankCorr: rankCorr, tiltsMoved: tiltsMoved, farmValueFactor: farmValueFactor, band: band, marketGrowth: valueModel.marketGrowth,
       coverage: { loo: { x3: looCov2575.x3, p2575: looCov2575.inside, p1090: looCov1090.inside }, wf: { x3: wfCov2575.x3, p2575: wfCov2575.inside, p1090: wfCov1090.inside } },
       fitted: {
         multiple100: multipleAt100M(valueModel), multiple100Se: boot.multiple100Se,
         sizeSlope: sizeSlope(valueModel), sizeSlopeSe: boot.slopeSe,
+        growth: valueModel.growth, age: valueModel.age, chains: valueModel.chains, carry: valueModel.carry,
         catLo: catEffects.length ? Math.min.apply(null, catEffects) : 1,
         catHi: catEffects.length ? Math.max.apply(null, catEffects) : 1,
       },
@@ -674,6 +779,7 @@ function buildRadar(snapshot) {
       kept: oddsSel.kept.length, total: ODDS_TERMS.length,
       baseRate: oddsModel.baseRate, withToken: peers.filter(function (p) { return !isPreToken(p); }).length,
       loo: oddsSel.loo, wf: oddsSel.wf, looRight: oddsSel.looRight, wfRight: oddsSel.wfRight,
+      ten: oddsSel.ten, tenRight: oddsSel.tenRight, baseTen: oddsSel.rows[0].ten.brier,
       bands: oddsModel.bandRates().map(function (r, i) {
         return { lo: AGE_BANDS[i], hi: AGE_BANDS[i + 1], rate: r, se: boot.bandSe[i] || 0,
           n: peers.filter(function (p) { return bandOf(ageYears(asOf, p.listed_at) || 0) === i; }).length };
@@ -685,15 +791,17 @@ function buildRadar(snapshot) {
     total: snapshot.protocols.length,
     ranked: scored.length, watchlist: parts.watchlist.length, early: parts.early.length, offlist: parts.offlist.length,
     token: parts.priced.length + parts.tokenNoCap.length, priced: parts.priced.length, tokenNoCap: parts.tokenNoCap.length,
-    out: { bridge: parts.out.bridge.length, liquidStaking: parts.out['liquid-staking'].length,
-      exchange: parts.out.exchange.length, versionedWrapped: parts.out['versioned-wrapped'].length },
-    outTotal: parts.out.bridge.length + parts.out['liquid-staking'].length + parts.out.exchange.length + parts.out['versioned-wrapped'].length,
+    out: { bridge: parts.out.bridge.length, staked: parts.out.staked.length,
+      exchange: parts.out.exchange.length, versioned: parts.out.versioned.length,
+      wrapped: parts.out.wrapped.length, kin: parts.out.kin.length },
+    outTotal: parts.out.bridge.length + parts.out.staked.length + parts.out.exchange.length + parts.out.versioned.length + parts.out.wrapped.length + parts.out.kin.length,
   };
   var stats = {
     protocols: snapshot.protocols.length, ranked: scored.length, comps: comps.length, peers: peers.length,
     valueKept: valueSel.kept, oddsKept: oddsSel.kept,
     valueLoo: valueSel.loo, valueWf: valueSel.wf,
-    oddsLoo: oddsSel.loo, oddsWf: oddsSel.wf,
+    oddsLoo: oddsSel.loo, oddsWf: oddsSel.wf, oddsTen: oddsSel.ten,
+    rankCorr: rankCorr, tiltsMoved: tiltsMoved, farmValueFactor: farmValueFactor,
     verdictCounts: verdictCounts, exitPct: exitPct,
     totalTvl: scored.reduce(function (a, s) { return a + s.p.tvl_usd; }, 0),
     multiple100: evidence.value.fitted.multiple100, sizeSlope: evidence.value.fitted.sizeSlope,
@@ -704,20 +812,22 @@ function buildRadar(snapshot) {
 }
 
 var API = {
-  MODEL_VERSION: MODEL_VERSION, BOOTSTRAPS: BOOTSTRAPS, TBILL_RATE: TBILL_RATE,
+  MODEL_VERSION: MODEL_VERSION, BOOTSTRAPS: BOOTSTRAPS, TBILL_RATE: TBILL_RATE, CAPITAL_RATE: CAPITAL_RATE,
   FARM_NET_HOUR: FARM_NET_HOUR, PARENT_FACTOR: PARENT_FACTOR, DEFAULT_SCENARIO: DEFAULT_SCENARIO,
+  DEP_MIN: DEP_MIN, DEP_MAX: DEP_MAX,
   VALUE_TERMS: VALUE_TERMS, ODDS_TERMS: ODDS_TERMS, AGE_BANDS: AGE_BANDS,
   median: median, percentile: percentile, mean: mean, stdev: stdev, round4: round4, clamp: clamp,
   checksum: checksum, money: money, ageDays: ageDays, ageYears: ageYears, bandOf: bandOf,
   familyOf: familyOf, gasFor: gasFor, isPreToken: isPreToken, exclusionReason: exclusionReason,
   isRankable: isRankable, partition: partition, tierOf: tierOf, isPricedComp: isPricedComp,
-  compsOf: compsOf, peersOf: peersOf, growthOf: growthOf, chainsLn: chainsLn,
+  compsOf: compsOf, peersOf: peersOf, growthOf: growthOf, chainsLn: chainsLn, ageLog: ageLog,
+  carryOf: carryOf, spearman: spearman,
   fitValue: fitValue, predictValue: predictValue, multipleAt100M: multipleAt100M, sizeSlope: sizeSlope,
   looValue: looValue, wfValue: wfValue, selectValueTerms: selectValueTerms, valueTermLabel: valueTermLabel,
   coverageOf: coverageOf, fitOdds: fitOdds, oddsFor: oddsFor, brierOf: brierOf,
-  looOdds: looOdds, wfOdds: wfOdds, selectOddsTerms: selectOddsTerms, oddsTermLabel: oddsTermLabel,
-  bootstrap: bootstrap, withAgeFallback: withAgeFallback, planDeposit: planDeposit,
-  feesFor: feesFor, hoursFor: hoursFor, verdictFor: verdictFor, buildRadar: buildRadar,
+  looOdds: looOdds, wfOdds: wfOdds, tenFoldOdds: tenFoldOdds, selectOddsTerms: selectOddsTerms, oddsTermLabel: oddsTermLabel,
+  bootstrap: bootstrap, withAgeFallback: withAgeFallback, sizedDeposit: sizedDeposit, capitalCharge: capitalCharge,
+  farmValueOf: farmValueOf, feesFor: feesFor, hoursFor: hoursFor, verdictFor: verdictFor, buildRadar: buildRadar,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 if (typeof window !== 'undefined') window.RADAR_MODEL = API;

@@ -1,11 +1,11 @@
 // A token-radar-01 entry (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// pre-token protocol with the fitted model in dashboard/0-model.js (radar-3), writes the ranked board to
+// pre-token protocol with the fitted model in dashboard/0-model.js (radar-4), writes the ranked board to
 // /output/board.json, and copies this repository's dashboard/ and screenshots/ to /output. Last, it
 // writes /output/dossier.json, the summary the judge reads, with the vendored make.fun library.
 //
-// The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css,
+// The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/styles.css,
 // dashboard/app.js and dashboard/0-model.js read /output/data.js, which this program writes from the
 // same snapshot. The page refits the model itself over that data and checks every number board.json
 // carries, so the page's code and the board's data are visibly the same arithmetic.
@@ -20,8 +20,12 @@
 //     coverage table that says whether those ranges are honest;
 //   - the board accounts for every one of the snapshot's 758 protocols in exactly one group, and
 //     the page's integrity strip recomputes the board and checks its totals and checksum;
-//   - each farm verdict is costed: a modelled drop net of the plan's own fees, against a 4% T-bill
-//     and a $25-an-hour bar, with a 10-step plan carrying a cost and a time per step.
+//   - each farm verdict is costed: a modelled drop net of the plan's own fees and a 2%-a-year
+//     capital charge, against a $25-an-hour bar (the T-bill is a benchmark, not a bar), with the
+//     deposit sized to the farm and a 10-step plan carrying a cost and a time per step.
+//   - radar-4 widens the priced comps (no listing date required, ratio cap 50x), adds a carry
+//     term and ten-fold odds validation, and reports the rank correlation and how far the fitted
+//     tilts move ranks off a flat multiple of TVL.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -101,7 +105,8 @@ writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEX
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${stats.comps} priced comps, ${stats.peers} odds peers)\n` +
     `token radar: value terms kept: ${(stats.valueKept as string[]).join(', ') || 'none'}; odds terms kept: ${(stats.oddsKept as string[]).join(', ') || 'none'}\n` +
-    `token radar: held-out miss walk-forward x${(stats.valueWf as number).toFixed(2)} (leave-one-out x${(stats.valueLoo as number).toFixed(2)}); odds Brier walk-forward ${(stats.oddsWf as number).toFixed(3)}\n` +
+    `token radar: held-out miss walk-forward x${(stats.valueWf as number).toFixed(2)} (leave-one-out x${(stats.valueLoo as number).toFixed(2)}); odds Brier walk-forward ${(stats.oddsWf as number).toFixed(3)} (ten-fold ${(stats.oddsTen as number).toFixed(3)})\n` +
+    `token radar: blind rank correlation ${(stats.rankCorr as number).toFixed(2)}; the tilts move ${stats.tiltsMoved} of ${board.length} ranks 5+ places off a flat multiple\n` +
     `token radar: verdicts ${JSON.stringify(stats.verdictCounts)}; total implied $${(stats.totalImplied as number).toLocaleString('en-US')}; checksum ${stats.checksum}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (4 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

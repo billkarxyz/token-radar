@@ -1,4 +1,4 @@
-// The token radar's Node side (radar-3): the snapshot in, the ranked board out.
+// The token radar's Node side (radar-4): the snapshot in, the ranked board out.
 //
 // The model itself lives in dashboard/0-model.js, one file shared with the page, so the program
 // that writes board.json and the page that refits it run the same code. This file is the Node
@@ -50,6 +50,7 @@ export interface ScoredRow {
   parentFactor: number;
   valueIfLaunches: number;
   odds: number;
+  farmValue: number;
   rateByAge: number;
   rateOldest: number;
   implied: number;
@@ -66,6 +67,10 @@ export interface ScoredRow {
   netHour: number;
   drop: number;
   fees: number;
+  deposit: number;
+  breakEvenOdds: number;
+  breakEvenShare: number;
+  capCharge: number;
 }
 
 /** What the shared build returns: the scored rows, the evidence, the run's statistics. */
@@ -82,7 +87,6 @@ export const MODEL_VERSION: string = MODEL.MODEL_VERSION as string;
 
 const sharedBuildRadar = MODEL.buildRadar as (snapshot: Snapshot) => SharedBuild;
 const gasFor = MODEL.gasFor as (chain: string) => number;
-const planDeposit = MODEL.planDeposit as (p: SnapshotProtocol) => number;
 const checksumOf = MODEL.checksum as (s: string) => string;
 const money = MODEL.money as (n: number) => string;
 const DEFAULT_SCENARIO = MODEL.DEFAULT_SCENARIO as { deposit: 'plan' | number; dropShare: number; weeks: number };
@@ -128,11 +132,10 @@ interface FarmStep {
   time: string;
 }
 
-/** The 10-step costed farm plan for one protocol at the default scenario. */
-function farmSteps(p: SnapshotProtocol, scenario: { deposit: 'plan' | number; dropShare: number; weeks: number }, exitPct: number): FarmStep[] {
+/** The 10-step costed farm plan for one protocol at the default scenario, at the sized deposit. */
+function farmSteps(p: SnapshotProtocol, scenario: { deposit: 'plan' | number; dropShare: number; weeks: number }, exitPct: number, deposit: number): FarmStep[] {
   const chain = chainOf(p);
   const gas = gasFor(chain);
-  const deposit = scenario.deposit === 'plan' ? planDeposit(p) : scenario.deposit;
   const weeks = scenario.weeks;
   const d = '$' + Math.round(deposit).toLocaleString('en-US');
   const exit = money(p.tvl_usd * (1 + exitPct / 100));
@@ -166,7 +169,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const scenario = { deposit: DEFAULT_SCENARIO.deposit, dropShare: DEFAULT_SCENARIO.dropShare, weeks: DEFAULT_SCENARIO.weeks };
   const steps: Record<string, string[]> = {};
   const board: BoardRow[] = r.scored.map((s) => {
-    const ss = farmSteps(s.p, scenario, r.exitPct).map(stepText);
+    const ss = farmSteps(s.p, scenario, r.exitPct, s.deposit).map(stepText);
     steps[s.p.slug] = ss;
     return {
       rank: s.rank, slug: s.p.slug, name: s.p.name, category: s.p.category, chains: s.p.chains,
@@ -174,8 +177,12 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       gecko_id: s.p.gecko_id, symbol: s.p.symbol, token_status: 'pre-token', age_days: s.ageDays,
       implied_value_usd: s.implied, tier: s.tier, parent_factor: s.parentFactor,
       value_if_launches_usd: Math.round(s.valueIfLaunches), token_odds: Math.round(s.odds * 10000) / 10000,
+      farm_value_usd: Math.round(s.farmValue),
       p25_usd: s.p25, p75_usd: s.p75, p10_usd: s.p10, p90_usd: s.p90,
       rank_lo: s.rankLo, rank_hi: s.rankHi, verdict: s.verdict,
+      deposit_usd: s.deposit, capital_charge_usd: Math.round(s.capCharge),
+      break_even_odds: Math.round(s.breakEvenOdds * 10000) / 10000,
+      break_even_drop_share: Math.round(s.breakEvenShare * 10000) / 10000,
       net_of_fees_usd: Math.round(s.net), net_per_hour_usd: Math.round(s.netHour * 10000) / 10000,
       farm_steps: ss,
     };
