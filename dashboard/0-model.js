@@ -1,4 +1,4 @@
-// Launch Radar's model (radar-4), shared by main.ts and the dashboard page.
+// Launch Radar's model (radar-5), shared by main.ts and the dashboard page.
 //
 // One file, no imports, no network: main.ts runs it in Node to write board.json, and the page runs
 // the same code in the browser over the same snapshot, so the page refits the model itself and checks
@@ -12,7 +12,7 @@
 
 'use strict';
 
-var MODEL_VERSION = 'radar-4';
+var MODEL_VERSION = 'radar-5';
 var BOOTSTRAPS = 200;
 var SEED = 20261114;
 var TBILL_RATE = 0.04; // the T-bill benchmark, 4% a year, shown against every verdict
@@ -29,14 +29,18 @@ var WF_MIN_TRAIN = 20; // a walk-forward prediction needs 20 earlier protocols t
 var RATIO_CAP = 50; // a priced comp's market cap is at most 50x its TVL; above that is a data quirk
 var DEP_MIN = 1000, DEP_MAX = 25000; // the plan deposit's bounds: the smallest that pays, capped
 
-// The exclusion taxonomy, applied to EVERY protocol first, in this order, so the ledger accounts
-// for all 758 in exactly one group: a bridge is a bridge whether or not it records a token.
-// Bridge covers the Bridge and Canonical Bridge categories; staked form the three liquid-staking
+// The exclusion taxonomy, for the ledger: every protocol lands in exactly one group, so the
+// ledger accounts for all 758. The priced comps are pulled out first (a staked or versioned
+// token that prices the fit is a comp, not an exclusion); the taxonomy then applies to the rest. Bridge
+// covers the Bridge and Canonical Bridge categories; staked form the three liquid-staking
 // categories; exchange the CEX category; versioned a name ending in a version (V1, v2, 2.0, II);
 // wrapped a stablecoin wrapper or a wrapped name; kin a pre-token protocol sharing its first word
 // (4+ letters) with a protocol that records a token — the same project's family. The watchlist
 // overrides every exclusion: a protocol the house list names is ranked, never set aside — the
 // gate requires every watchlist slug on the board, and Saturn (a stablecoin wrapper) is on it.
+// The FITS use a narrower rule: only bridge and exchange tokens are left out of the comps and
+// the peers — a bridge or exchange token prices the bridge or the exchange, not a launch —
+// while staked and versioned tokens stay in, because they still price a comparable launch.
 var VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+|II|III|IV)$/;
 var WRAPPED_NAME = /\bwrapped\b/i;
 var W_PREFIX = /^w[A-Z]/;
@@ -159,10 +163,12 @@ function exclusionReason(p, ctx) {
 }
 function isRankable(p, ctx) { return isPreToken(p) && exclusionReason(p, ctx) === null; }
 
-// Every protocol in exactly one group. Exclusions come first, so a versioned bridge with a token
-// is versioned-or-bridge, never a comp. The off-list tier is derived, not listed: a rankable
-// protocol above the floor that the watchlist does not name passes every stated rule, so the one
-// rule the snapshot cannot show — the parent check — is what left it out: its parent records a token.
+// Every protocol in exactly one group. The priced comps are pulled out first, so the priced
+// count is the comps the value fit runs on; the exclusion taxonomy then sorts the rest, token
+// or pre-token, and the token protocols it passes land in tokenNoCap. The off-list tier is
+// derived, not listed: a rankable protocol above the floor that the watchlist does not name
+// passes every stated rule, so the one rule the snapshot cannot show — the parent check — is
+// what left it out: its parent records a token.
 function partition(snapshot) {
   var ctx = kinContext(snapshot);
   var wl = ctx.watchlist;
@@ -170,12 +176,10 @@ function partition(snapshot) {
     out: { bridge: [], staked: [], exchange: [], versioned: [], wrapped: [], kin: [] } };
   snapshot.protocols.forEach(function (p) {
     if (wl[p.slug] && isPreToken(p)) { g.watchlist.push(p); return; }
+    if (isPricedComp(p, ctx)) { g.priced.push(p); return; }
     var reason = exclusionReason(p, ctx);
     if (reason) { g.out[reason].push(p); return; }
-    if (!isPreToken(p)) {
-      if (isPricedComp(p, ctx)) g.priced.push(p); else g.tokenNoCap.push(p);
-      return;
-    }
+    if (!isPreToken(p)) { g.tokenNoCap.push(p); return; }
     if (p.tvl_usd >= snapshot.floor_usd) g.offlist.push(p);
     else g.early.push(p);
   });
@@ -187,20 +191,28 @@ function tierOf(snapshot, p) {
   return 'early';
 }
 
-// A priced comp for the value fit: its token trades, the ratio is usable, and its category is one
-// the board ranks. No listing date is required: the fit and leave-one-out do not need one, and
-// walk-forward runs on the dated subset. Ratios above 50x are data quirks, not comps.
+// A priced comp for the value fit: its token trades and the ratio is usable. No listing date is
+// required: the fit and leave-one-out do not need one, and walk-forward runs on the dated subset.
+// Ratios above 50x are data quirks, not comps. Only bridge and exchange tokens are left out: a
+// bridge or exchange token prices the bridge or the exchange, not a launch. Staked and versioned
+// tokens stay in — they still price a comparable launch — and no wrapped or kin token in this
+// snapshot carries a usable ratio, so the rule covers them vacuously. (ctx is unused: the comps
+// do not follow the board's exclusion taxonomy.)
 function isPricedComp(p, ctx) {
   if (p.mcap_usd === null || p.tvl_usd <= 0) return false;
   var ratio = p.mcap_usd / p.tvl_usd;
   if (!isFinite(ratio) || ratio <= 0 || ratio > RATIO_CAP) return false;
-  return exclusionReason(p, ctx) === null;
+  if (p.category === 'Bridge' || p.category === 'Canonical Bridge' || p.category === 'CEX') return false;
+  return true;
 }
 function compsOf(snapshot) { var ctx = kinContext(snapshot); return snapshot.protocols.filter(function (p) { return isPricedComp(p, ctx); }); }
 // The odds peers: every protocol the token question applies to, with a listing date to age it by.
+// The same narrow rule as the comps: only bridge and exchange protocols are left out, so staked,
+// versioned, wrapped and kin protocols count as peers too.
 function peersOf(snapshot) {
-  var ctx = kinContext(snapshot);
-  return snapshot.protocols.filter(function (p) { return exclusionReason(p, ctx) === null && p.listed_at; });
+  return snapshot.protocols.filter(function (p) {
+    return p.listed_at && p.category !== 'Bridge' && p.category !== 'Canonical Bridge' && p.category !== 'CEX';
+  });
 }
 
 // --- the value model ------------------------------------------------------
@@ -365,7 +377,7 @@ function coverageOf(preds, actuals, relLo, relHi, misses) {
 // Terms refine the peer subset; each is kept only when it lowers the Brier score in BOTH tests.
 // Rates are shrunk toward their parent rate with 8 pseudo-observations.
 
-var ODDS_TERMS = ['age', 'family', 'size', 'growth', 'chains'];
+var ODDS_TERMS = ['age', 'family', 'category', 'size', 'growth', 'chains'];
 
 function sizeTerciles(peers) {
   var xs = peers.map(function (p) { return Math.log(p.tvl_usd); }).sort(function (a, b) { return a - b; });
@@ -378,34 +390,52 @@ function sizeBandOf(p, terciles) {
 function growthSignOf(p) { return growthOf(p) > 0 ? 1 : 0; }
 function chainsBandOf(p) { return p.chains.length > 1 ? 1 : 0; }
 
+// The hierarchy levels below the age band, in order: each refines the peer subset, and each
+// rate is shrunk toward the level above it. 'category' sits between family and size: a finer
+// split of its family. Only the levels in terms are built, so a term not kept changes nothing.
+var ODDS_LEVELS = ['family', 'category', 'size', 'growth', 'chains'];
+function levelPart(level, p, terciles) {
+  if (level === 'family') return familyOf(p.category);
+  if (level === 'category') return p.category || 'Other';
+  if (level === 'size') return sizeBandOf(p, terciles);
+  if (level === 'growth') return growthSignOf(p);
+  return chainsBandOf(p);
+}
+
 function fitOdds(peers, asOf, terms) {
   var terciles = sizeTerciles(peers);
-  var n = peers.length;
   var has = peers.map(function (p) { return isPreToken(p) ? 0 : 1; });
   var baseRate = mean(has);
-  // Count successes and totals at each level of the hierarchy, keyed by band and subset.
-  var band = {}, fam = {}, famSize = {}, famSizeGrowth = {}, famSizeGrowthChains = {};
-  // The old cohort (peers that ran 3+ years) at each level: the eventual rate for peers like this.
-  // The single oldest band holds 5 peers, too few to anchor the odds, so the old cohort is pooled.
-  var old = { s: 0, n: 0 }, oldFam = {}, oldFamSize = {}, oldFamSizeGrowth = {}, oldFamSizeGrowthChains = {};
+  var levels = ODDS_LEVELS.filter(function (l) { return terms.indexOf(l) >= 0; });
+  // Count successes and totals at each level of the hierarchy: tables[k] is keyed by the band
+  // plus the first k levels' parts, oldTables[k] the same without the band, for the old cohort
+  // (peers that ran 3+ years) — the single oldest band holds 5 peers, too few to anchor the
+  // odds, so the old cohort is pooled. oldTables[0] is keyed '' and holds the pooled old count.
+  var tables = [], oldTables = [];
+  for (var k = 0; k <= levels.length; k++) { tables.push({}); oldTables.push({}); }
   function bump(table, key, y) {
     var c = table[key] || (table[key] = { s: 0, n: 0 });
     c.s += y; c.n += 1;
   }
+  function partsFor(p, familyOverride) {
+    var parts = [];
+    for (var k = 0; k < levels.length; k++) {
+      var part = levelPart(levels[k], p, terciles);
+      if (levels[k] === 'family' && familyOverride !== undefined) part = familyOverride;
+      parts.push(part);
+    }
+    return parts;
+  }
   peers.forEach(function (p, i) {
     var b = bandOf(ageYears(asOf, p.listed_at) || 0);
-    var f = familyOf(p.category), sz = sizeBandOf(p, terciles), g = growthSignOf(p), c = chainsBandOf(p);
-    bump(band, b, has[i]);
-    bump(fam, b + '|' + f, has[i]);
-    bump(famSize, b + '|' + f + '|' + sz, has[i]);
-    bump(famSizeGrowth, b + '|' + f + '|' + sz + '|' + g, has[i]);
-    bump(famSizeGrowthChains, b + '|' + f + '|' + sz + '|' + g + '|' + c, has[i]);
+    var parts = partsFor(p);
+    var key = String(b);
+    bump(tables[0], key, has[i]);
+    for (var k = 0; k < parts.length; k++) { key += '|' + parts[k]; bump(tables[k + 1], key, has[i]); }
     if ((ageYears(asOf, p.listed_at) || 0) >= 3) {
-      old.s += has[i]; old.n += 1;
-      bump(oldFam, f, has[i]);
-      bump(oldFamSize, f + '|' + sz, has[i]);
-      bump(oldFamSizeGrowth, f + '|' + sz + '|' + g, has[i]);
-      bump(oldFamSizeGrowthChains, f + '|' + sz + '|' + g + '|' + c, has[i]);
+      bump(oldTables[0], '', has[i]);
+      var okey = '';
+      for (var k = 0; k < parts.length; k++) { okey = okey === '' ? String(parts[k]) : okey + '|' + parts[k]; bump(oldTables[k + 1], okey, has[i]); }
     }
   });
   function shrunk(table, key, prior) {
@@ -415,30 +445,26 @@ function fitOdds(peers, asOf, terms) {
   }
   function rateAt(p, bandIdx, familyOverride) {
     var b = bandIdx === undefined ? bandOf(ageYears(asOf, p.listed_at) || 0) : bandIdx;
-    var f = familyOverride !== undefined ? familyOverride : familyOf(p.category);
     if (terms.indexOf('age') < 0) return baseRate;
-    var r = shrunk(band, b, baseRate);
-    if (terms.indexOf('family') >= 0) r = shrunk(fam, b + '|' + f, r);
-    if (terms.indexOf('size') >= 0) r = shrunk(famSize, b + '|' + f + '|' + sizeBandOf(p, terciles), r);
-    if (terms.indexOf('growth') >= 0) r = shrunk(famSizeGrowth, b + '|' + f + '|' + sizeBandOf(p, terciles) + '|' + growthSignOf(p), r);
-    if (terms.indexOf('chains') >= 0) r = shrunk(famSizeGrowthChains, b + '|' + f + '|' + sizeBandOf(p, terciles) + '|' + growthSignOf(p) + '|' + chainsBandOf(p), r);
+    var parts = partsFor(p, familyOverride);
+    var r = shrunk(tables[0], String(b), baseRate);
+    var key = String(b);
+    for (var k = 0; k < parts.length; k++) { key += '|' + parts[k]; r = shrunk(tables[k + 1], key, r); }
     return r;
   }
   // The overall rate per age band (no subset), for the evidence table's cohort curve.
   function bandRates() {
     var out = [];
-    for (var b = 0; b < AGE_BANDS.length - 1; b++) out.push(shrunk(band, b, baseRate));
+    for (var b = 0; b < AGE_BANDS.length - 1; b++) out.push(shrunk(tables[0], String(b), baseRate));
     return out;
   }
   // The eventual rate for peers like this one: the old cohort (3+ years) in its subset, shrunk
   // toward the overall old-cohort rate. This is the Rmax of the conditional odds.
   function rateOldest(p) {
-    var f = familyOf(p.category);
-    var r = (old.s + SHRINK_M * baseRate) / (old.n + SHRINK_M);
-    if (terms.indexOf('family') >= 0) r = shrunk(oldFam, f, r);
-    if (terms.indexOf('size') >= 0) r = shrunk(oldFamSize, f + '|' + sizeBandOf(p, terciles), r);
-    if (terms.indexOf('growth') >= 0) r = shrunk(oldFamSizeGrowth, f + '|' + sizeBandOf(p, terciles) + '|' + growthSignOf(p), r);
-    if (terms.indexOf('chains') >= 0) r = shrunk(oldFamSizeGrowthChains, f + '|' + sizeBandOf(p, terciles) + '|' + growthSignOf(p) + '|' + chainsBandOf(p), r);
+    var parts = partsFor(p);
+    var r = shrunk(oldTables[0], '', baseRate);
+    var key = '';
+    for (var k = 0; k < parts.length; k++) { key = key === '' ? String(parts[k]) : key + '|' + parts[k]; r = shrunk(oldTables[k + 1], key, r); }
     return r;
   }
   return { terciles: terciles, baseRate: baseRate, terms: terms.slice(), rateAt: rateAt, bandRates: bandRates, rateOldest: rateOldest };
@@ -523,7 +549,7 @@ function selectOddsTerms(peers, asOf) {
   return { kept: kept, rows: rows, loo: cur.loo.brier, ten: keptTen.brier, tenRight: keptTen.right, wf: cur.wf.brier, looRight: cur.loo.right, wfRight: cur.wf.right };
 }
 function oddsTermLabel(t) {
-  return { age: 'age, years listed', family: 'family effect', size: 'size curve, ln TVL',
+  return { age: 'age, years listed', family: 'family effect', category: 'category effect', size: 'size curve, ln TVL',
     growth: '7-day TVL growth', chains: 'chain count, ln' }[t] || t;
 }
 

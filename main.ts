@@ -1,7 +1,7 @@
 // A token-radar-01 entry (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// pre-token protocol with the fitted model in dashboard/0-model.js (radar-4), writes the ranked board to
+// pre-token protocol with the fitted model in dashboard/0-model.js (radar-5), writes the ranked board to
 // /output/board.json, and copies this repository's dashboard/ and screenshots/ to /output. Last, it
 // writes /output/dossier.json, the summary the judge reads, with the vendored make.fun library.
 //
@@ -26,6 +26,9 @@
 //   - radar-4 widens the priced comps (no listing date required, ratio cap 50x), adds a carry
 //     term and ten-fold odds validation, and reports the rank correlation and how far the fitted
 //     tilts move ranks off a flat multiple of TVL.
+//   - radar-5 widens the priced comps to 104 and the odds peers to 536 on one rule (bridge and
+//     exchange tokens left out, staked and versioned kept), keeps a third value term (7-day
+//     growth), and tests a category odds term — it fails both blind tests, so it stays out.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json

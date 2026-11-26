@@ -1,4 +1,4 @@
-/* Launch Radar (radar-4): refits the model in this browser over data.js and renders the board.
+/* Launch Radar (radar-5): refits the model in this browser over data.js and renders the board.
    Every number on the page is recomputed here from the snapshot; the integrity strip says how
    far the recomputation agrees with board.json. */
 (function () {
@@ -225,7 +225,7 @@ function auditHtml(s) {
   if (vm.terms.indexOf('chains') >= 0) html += ln('Chain count — coefficient ' + vm.chains.toFixed(2) + ' on ln(' + s.p.chains.length + ' chains)', 'x' + Math.exp(vm.chains * M.chainsLn(s.p)).toFixed(2));
   if (vm.terms.indexOf('carry') >= 0) html += ln('Carry — coefficient ' + vm.carry.toFixed(2) + ' on ' + pct(M.carryOf(s.p, vm.marketGrowth), 1) + ' of 7-day change beyond the market\'s ' + pct(vm.marketGrowth, 1), 'x' + Math.exp(vm.carry * M.carryOf(s.p, vm.marketGrowth)).toFixed(2));
   html += ln('= Value if a token launches — TVL × effective multiple', usdF(s.valueIfLaunches));
-  var oddsShort = { 'age, years listed': 'age', 'family effect': 'family', 'size curve, ln TVL': 'size', '7-day TVL growth': '7-day growth', 'chain count, ln': 'chain count' };
+  var oddsShort = { 'age, years listed': 'age', 'family effect': 'family', 'category effect': 'category', 'size curve, ln TVL': 'size', '7-day TVL growth': '7-day growth', 'chain count, ln': 'chain count' };
   var oddsKept = R.evidence.odds.rows.filter(function (r) { return r.verdict === 'kept'; }).map(function (r) { return oddsShort[r.name.replace(/^\+ /, '')] || r.name.replace(/^\+ /, ''); });
   var oddsBy = oddsKept.length ? 'peers of its ' + (oddsKept.length > 1 ? oddsKept.slice(0, -1).join(', ') + ' and ' + oddsKept[oddsKept.length - 1] : oddsKept[0]) : 'peers';
   html += ln('Token odds — ' + oddsBy + ': ' + pct(s.rateByAge) + ' record a token by its age (' + ageStr(s.ageDays) + '), ' + pct(s.rateOldest) + ' by the 3yr+ cohort\'s, so (' + pct(s.rateOldest) + ' − ' + pct(s.rateByAge) + ') ÷ (100% − ' + pct(s.rateByAge) + ') = ' + pct(s.odds) + '; Brier ' + R.evidence.odds.wf.toFixed(3) + ' vs base ' + R.evidence.odds.rows[0].wf.brier.toFixed(3), 'x' + s.odds.toFixed(2));
@@ -356,7 +356,7 @@ function topHtml() {
   groups.forEach(function (g) { bar += '<i style="width:' + (g[1] / ac.total * 100).toFixed(2) + '%;background:' + g[2] + '"></i>'; leg += '<span><i class="dot" style="background:' + g[2] + '"></i>' + g[0] + ' <b class="num">' + g[1] + '</b></span>'; });
   var chk = function (ok, t) { return '<span class="' + (ok ? '' : 'bad') + '">' + (ok ? '✓' : '✗') + ' ' + t + '</span>'; };
   return '<div class="head"><div><h1>Launch Radar</h1><p class="sub">Pre-token protocols, priced from the record of tokens that already trade.</p></div>'
-    + '<div class="meta">Model <b>radar-4</b> · snapshot ' + D.as_of + ' · ' + D.source + '<br>refitted in this browser · ' + D.protocols.length + ' protocols</div></div>' + kpi
+    + '<div class="meta">Model <b>radar-5</b> · snapshot ' + D.as_of + ' · ' + D.source + '<br>refitted in this browser · ' + D.protocols.length + ' protocols</div></div>' + kpi
     + '<p class="formula"><b>Implied value = TVL × fitted multiple</b> (the value if a token launches) <b>× token odds</b> (from how long peers ran before recording one). Each coefficient is fitted on this snapshot and tested held-out.</p>'
     + '<div class="acct"><div class="t">Every protocol in the snapshot, in exactly one group — <b class="num">' + ac.total + ' total</b></div><div class="bar">' + bar + '</div><div class="legend">' + leg + '</div></div>'
     + '<div class="integ">' + chk(integ.ok === integ.n, 'this table = board.json: ' + integ.ok + ' of ' + integ.n + ' rows recomputed here')
@@ -368,7 +368,7 @@ function topHtml() {
 }
 function footHtml() {
   return '<footer class="foot">Data: the sealed DefiLlama snapshot of ' + D.as_of + ' (' + D.protocols.length + ' protocols, floor ' + usd(D.floor_usd) + '). '
-    + 'Model: radar-4 — fitted on ' + R.evidence.value.n + ' traded tokens, tested leave-one-out and walk-forward; the token odds are the peers\' record. '
+    + 'Model: radar-5 — fitted on ' + R.evidence.value.n + ' traded tokens, tested leave-one-out and walk-forward; the token odds are the peers\' record. '
     + 'Stated assumptions: gas $3.00 Ethereum (blended), $0.01 Solana, $0.05 other L2s, $1.00 elsewhere; T-bill 4% a year as a benchmark; capital charge 2% a year; drop share 10%; the farm is sized on the P25 value and the deposit is the smallest, $1,000–$25,000, that clears $25 an hour; off-list rows carry a stated ×0.50 parent haircut, not a fitted term. '
     + 'Implied values are this model\'s claim, never make.fun\'s. A protocol records no token on DefiLlama — that is not proof it has none.</footer>';
 }

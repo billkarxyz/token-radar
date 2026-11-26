@@ -1,4 +1,4 @@
-// The token radar's Node side (radar-4): the snapshot in, the ranked board out.
+// The token radar's Node side (radar-5): the snapshot in, the ranked board out.
 //
 // The model itself lives in dashboard/0-model.js, one file shared with the page, so the program
 // that writes board.json and the page that refits it run the same code. This file is the Node
