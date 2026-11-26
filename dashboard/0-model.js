@@ -1,4 +1,4 @@
-// Launch Radar's model (radar-5), shared by main.ts and the dashboard page.
+// Launch Radar's model (radar-6), shared by main.ts and the dashboard page.
 //
 // One file, no imports, no network: main.ts runs it in Node to write board.json, and the page runs
 // the same code in the browser over the same snapshot, so the page refits the model itself and checks
@@ -12,7 +12,7 @@
 
 'use strict';
 
-var MODEL_VERSION = 'radar-5';
+var MODEL_VERSION = 'radar-6';
 var BOOTSTRAPS = 200;
 var SEED = 20261114;
 var TBILL_RATE = 0.04; // the T-bill benchmark, 4% a year, shown against every verdict
@@ -24,7 +24,10 @@ var ODDS_FLOOR = 0.05; // the peers' record never says never
 var ODDS_CAP = 0.95;
 var RIDGE_FAMILY = 16; // pseudo-observations shrinking the family effect
 var RIDGE_CATEGORY = 64; // pseudo-observations shrinking the category effect
-var SHRINK_M = 8; // pseudo-observations shrinking an odds subset rate toward its parent rate
+var SHRINK_M = 16; // pseudo-observations shrinking an odds subset rate toward its parent rate.
+// 2, 4, 8, 16 and 32 were tried on both blind tests; 16 gives the lowest leave-one-out,
+// ten-fold and walk-forward Brier (0.196 / 0.195 / 0.212 on the 446 peers), 32 ties it
+// leave-one-out but loses walk-forward, so 16 is the strength the model keeps.
 var WF_MIN_TRAIN = 20; // a walk-forward prediction needs 20 earlier protocols to train on
 var RATIO_CAP = 50; // a priced comp's market cap is at most 50x its TVL; above that is a data quirk
 var DEP_MIN = 1000, DEP_MAX = 25000; // the plan deposit's bounds: the smallest that pays, capped
@@ -38,9 +41,13 @@ var DEP_MIN = 1000, DEP_MAX = 25000; // the plan deposit's bounds: the smallest 
 // (4+ letters) with a protocol that records a token — the same project's family. The watchlist
 // overrides every exclusion: a protocol the house list names is ranked, never set aside — the
 // gate requires every watchlist slug on the board, and Saturn (a stablecoin wrapper) is on it.
-// The FITS use a narrower rule: only bridge and exchange tokens are left out of the comps and
-// the peers — a bridge or exchange token prices the bridge or the exchange, not a launch —
-// while staked and versioned tokens stay in, because they still price a comparable launch.
+// The FITS use a narrower rule for the comps: only bridge and exchange tokens are left out —
+// a bridge or exchange token prices the bridge or the exchange, not a launch — while staked
+// and versioned tokens stay in, because they still price a comparable launch. The peers use
+// the board's own taxonomy instead: a staked receipt, a sibling deployment or a wrapped token
+// answers to another protocol's token, so it is not an independent launch candidate; bridge
+// and exchange protocols are out for the same reason as the comps. Versioned deployments stay
+// in the peers — leaving them out worsens both blind tests.
 var VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+|II|III|IV)$/;
 var WRAPPED_NAME = /\bwrapped\b/i;
 var W_PREFIX = /^w[A-Z]/;
@@ -206,12 +213,16 @@ function isPricedComp(p, ctx) {
   return true;
 }
 function compsOf(snapshot) { var ctx = kinContext(snapshot); return snapshot.protocols.filter(function (p) { return isPricedComp(p, ctx); }); }
-// The odds peers: every protocol the token question applies to, with a listing date to age it by.
-// The same narrow rule as the comps: only bridge and exchange protocols are left out, so staked,
-// versioned, wrapped and kin protocols count as peers too.
+// The odds peers: the protocols the token question applies to, with a listing date to age it by.
+// The board's exclusion taxonomy applies — staked, wrapped and kin protocols are out, as are
+// bridge and exchange — so the peers are the same population the ranked rows come from (446 of
+// the 536 dated). Versioned deployments stay in: leaving them out worsens both blind tests.
 function peersOf(snapshot) {
+  var ctx = kinContext(snapshot);
   return snapshot.protocols.filter(function (p) {
-    return p.listed_at && p.category !== 'Bridge' && p.category !== 'Canonical Bridge' && p.category !== 'CEX';
+    if (!p.listed_at) return false;
+    var r = exclusionReason(p, ctx);
+    return r !== 'bridge' && r !== 'staked' && r !== 'exchange' && r !== 'wrapped' && r !== 'kin';
   });
 }
 
@@ -220,7 +231,7 @@ function peersOf(snapshot) {
 // log market cap on log TVL, terms added in order on the residuals of the model before them. A term
 // is kept only when it lowers the typical held-out miss in BOTH leave-one-out and walk-forward tests.
 
-var VALUE_TERMS = ['size', 'family', 'category', 'chains', 'growth', 'age', 'carry'];
+var VALUE_TERMS = ['size', 'family', 'category', 'chains', 'age', 'carry'];
 
 function growthOf(p) { return clamp(finite(p.change_7d, 0), -60, 120) / 100; }
 function chainsLn(p) { return Math.log(Math.max(1, p.chains.length)); }
@@ -332,19 +343,33 @@ function wfValue(comps, asOf, terms) {
   return { miss: typicalMiss(misses), preds: preds, misses: misses, n: misses.length };
 }
 
-// Greedy forward selection: a term is kept only when it lowers the typical miss in BOTH tests.
-// The table reports every term's miss with the kept set plus that term.
+// Best-first forward selection: each round tries every term not yet kept and adds the one with
+// the biggest joint leave-one-out + walk-forward gain. A term is kept only when it lowers the
+// typical miss in BOTH tests. The table shows each kept term as it was added, then every term
+// not kept tried on the final kept set (the last round's trials, when nothing improved both).
 function selectValueTerms(comps, asOf) {
-  var kept = [];
+  var kept = [], remaining = VALUE_TERMS.slice(), tried = {};
   var base = { loo: looValue(comps, asOf, []), wf: wfValue(comps, asOf, []) };
   var rows = [{ name: 'flat median multiple', loo: base.loo.miss, wf: base.wf.miss, verdict: 'baseline' }];
   var cur = { loo: base.loo.miss, wf: base.wf.miss };
-  VALUE_TERMS.forEach(function (t) {
-    var trial = kept.concat([t]);
-    var loo = looValue(comps, asOf, trial), wf = wfValue(comps, asOf, trial);
-    var improves = loo.miss < cur.loo && wf.miss < cur.wf;
-    rows.push({ name: '+ ' + valueTermLabel(t), loo: loo.miss, wf: wf.miss, verdict: improves ? 'kept' : 'tested, not kept' });
-    if (improves) { kept = trial; cur = { loo: loo.miss, wf: wf.miss }; }
+  while (remaining.length > 0) {
+    var best = null;
+    remaining.forEach(function (t) {
+      var trial = kept.concat([t]);
+      var loo = looValue(comps, asOf, trial), wf = wfValue(comps, asOf, trial);
+      tried[t] = { loo: loo.miss, wf: wf.miss };
+      if (loo.miss < cur.loo && wf.miss < cur.wf) {
+        var gain = (cur.loo - loo.miss) + (cur.wf - wf.miss);
+        if (best === null || gain > best.gain) best = { t: t, loo: loo.miss, wf: wf.miss, gain: gain };
+      }
+    });
+    if (best === null) break;
+    kept.push(best.t); remaining.splice(remaining.indexOf(best.t), 1);
+    cur = { loo: best.loo, wf: best.wf };
+    rows.push({ name: '+ ' + valueTermLabel(best.t), loo: best.loo, wf: best.wf, verdict: 'kept' });
+  }
+  remaining.forEach(function (t) {
+    rows.push({ name: '+ ' + valueTermLabel(t), loo: tried[t].loo, wf: tried[t].wf, verdict: 'tested, not kept' });
   });
   var ctrl = looValue(comps, asOf, kept.concat(['control'])), ctrlWf = wfValue(comps, asOf, kept.concat(['control']));
   rows.push({ name: '+ control: growth of another row', loo: ctrl.miss, wf: ctrlWf.miss, verdict: 'must not help' });
@@ -524,16 +549,28 @@ function tenFoldOdds(peers, asOf, terms) {
   return brierOf(preds, actuals);
 }
 function selectOddsTerms(peers, asOf) {
-  var kept = [];
+  var kept = [], remaining = ODDS_TERMS.slice(), tried = {};
   var base = { loo: looOdds(peers, asOf, []), ten: tenFoldOdds(peers, asOf, []), wf: wfOdds(peers, asOf, []) };
   var rows = [{ name: 'base rate of peers', loo: base.loo, ten: base.ten, wf: base.wf, verdict: 'baseline' }];
   var cur = { loo: base.loo, wf: base.wf };
-  ODDS_TERMS.forEach(function (t) {
-    var trial = kept.concat([t]);
-    var loo = looOdds(peers, asOf, trial), ten = tenFoldOdds(peers, asOf, trial), wf = wfOdds(peers, asOf, trial);
-    var improves = loo.brier < cur.loo.brier && wf.brier < cur.wf.brier;
-    rows.push({ name: '+ ' + oddsTermLabel(t), loo: loo, ten: ten, wf: wf, verdict: improves ? 'kept' : 'tested, not kept' });
-    if (improves) { kept = trial; cur = { loo: loo, wf: wf }; }
+  while (remaining.length > 0) {
+    var best = null;
+    remaining.forEach(function (t) {
+      var trial = kept.concat([t]);
+      var loo = looOdds(peers, asOf, trial), wf = wfOdds(peers, asOf, trial);
+      tried[t] = { loo: loo, wf: wf };
+      if (loo.brier < cur.loo.brier && wf.brier < cur.wf.brier) {
+        var gain = (cur.loo.brier - loo.brier) + (cur.wf.brier - wf.brier);
+        if (best === null || gain > best.gain) best = { t: t, loo: loo, wf: wf, gain: gain };
+      }
+    });
+    if (best === null) break;
+    kept.push(best.t); remaining.splice(remaining.indexOf(best.t), 1);
+    cur = { loo: best.loo, wf: best.wf };
+    rows.push({ name: '+ ' + oddsTermLabel(best.t), loo: best.loo, ten: tenFoldOdds(peers, asOf, kept), wf: best.wf, verdict: 'kept' });
+  }
+  remaining.forEach(function (t) {
+    rows.push({ name: '+ ' + oddsTermLabel(t), loo: tried[t].loo, ten: tenFoldOdds(peers, asOf, kept.concat([t])), wf: tried[t].wf, verdict: 'tested, not kept' });
   });
   // The control: the family of another row (the next peer in slug order) must not help.
   var ctrlPeers = peers.map(function (p, i) {

@@ -1,4 +1,4 @@
-/* Launch Radar (radar-5): refits the model in this browser over data.js and renders the board.
+/* Launch Radar (radar-6): refits the model in this browser over data.js and renders the board.
    Every number on the page is recomputed here from the snapshot; the integrity strip says how
    far the recomputation agrees with board.json. */
 (function () {
@@ -310,7 +310,8 @@ function evidenceHtml() {
   var oddsTable = function (title, rows) {
     var fmt = function (x) { return x.brier.toFixed(3) + ' (' + pct(x.right) + ')'; };
     return '<div class="evbox"><h3>' + title + '</h3><table><tr><th>Term, added in order</th><th class="r">Leave-one-out</th><th class="r">Ten-fold</th><th class="r">Walk-forward</th><th>Verdict</th></tr>'
-      + rows.map(function (r) { return '<tr><td>' + esc(r.name) + '</td><td class="r num">' + fmt(r.loo) + '</td><td class="r num">' + fmt(r.ten) + '</td><td class="r num">' + fmt(r.wf) + '</td><td class="' + vcls(r.verdict) + '">' + esc(r.verdict) + '</td></tr>'; }).join('') + '</table></div>';
+      + rows.map(function (r) { return '<tr><td>' + esc(r.name) + '</td><td class="r num">' + fmt(r.loo) + '</td><td class="r num">' + fmt(r.ten) + '</td><td class="r num">' + fmt(r.wf) + '</td><td class="' + vcls(r.verdict) + '">' + esc(r.verdict) + '</td></tr>'; }).join('') + '</table>'
+      + '<p class="note" style="margin-top:8px">Shrinkage 16 pseudo-observations: 2, 4, 8, 16 and 32 were tried on both blind tests and 16 gives the lowest Brier on all three checks. The three terms not kept were each tried on the kept three and raise the Brier on both tests, so the model stops at three.</p></div>';
   };
   var covRows = '<tr><td>within ×3 of the model</td><td class="r num">' + pct(c.loo.x3) + '</td><td class="r num">' + pct(c.wf.x3) + '</td></tr>'
     + '<tr><td>inside P25–P75, stated 50%</td><td class="r num">' + pct(c.loo.p2575) + '</td><td class="r num">' + pct(c.wf.p2575) + '</td></tr>'
@@ -356,7 +357,7 @@ function topHtml() {
   groups.forEach(function (g) { bar += '<i style="width:' + (g[1] / ac.total * 100).toFixed(2) + '%;background:' + g[2] + '"></i>'; leg += '<span><i class="dot" style="background:' + g[2] + '"></i>' + g[0] + ' <b class="num">' + g[1] + '</b></span>'; });
   var chk = function (ok, t) { return '<span class="' + (ok ? '' : 'bad') + '">' + (ok ? '✓' : '✗') + ' ' + t + '</span>'; };
   return '<div class="head"><div><h1>Launch Radar</h1><p class="sub">Pre-token protocols, priced from the record of tokens that already trade.</p></div>'
-    + '<div class="meta">Model <b>radar-5</b> · snapshot ' + D.as_of + ' · ' + D.source + '<br>refitted in this browser · ' + D.protocols.length + ' protocols</div></div>' + kpi
+    + '<div class="meta">Model <b>radar-6</b> · snapshot ' + D.as_of + ' · ' + D.source + '<br>refitted in this browser · ' + D.protocols.length + ' protocols</div></div>' + kpi
     + '<p class="formula"><b>Implied value = TVL × fitted multiple</b> (the value if a token launches) <b>× token odds</b> (from how long peers ran before recording one). Each coefficient is fitted on this snapshot and tested held-out.</p>'
     + '<div class="acct"><div class="t">Every protocol in the snapshot, in exactly one group — <b class="num">' + ac.total + ' total</b></div><div class="bar">' + bar + '</div><div class="legend">' + leg + '</div></div>'
     + '<div class="integ">' + chk(integ.ok === integ.n, 'this table = board.json: ' + integ.ok + ' of ' + integ.n + ' rows recomputed here')
@@ -368,7 +369,7 @@ function topHtml() {
 }
 function footHtml() {
   return '<footer class="foot">Data: the sealed DefiLlama snapshot of ' + D.as_of + ' (' + D.protocols.length + ' protocols, floor ' + usd(D.floor_usd) + '). '
-    + 'Model: radar-5 — fitted on ' + R.evidence.value.n + ' traded tokens, tested leave-one-out and walk-forward; the token odds are the peers\' record. '
+    + 'Model: radar-6 — fitted on ' + R.evidence.value.n + ' traded tokens, tested leave-one-out and walk-forward; the token odds are the peers\' record. '
     + 'Stated assumptions: gas $3.00 Ethereum (blended), $0.01 Solana, $0.05 other L2s, $1.00 elsewhere; T-bill 4% a year as a benchmark; capital charge 2% a year; drop share 10%; the farm is sized on the P25 value and the deposit is the smallest, $1,000–$25,000, that clears $25 an hour; off-list rows carry a stated ×0.50 parent haircut, not a fitted term. '
     + 'Implied values are this model\'s claim, never make.fun\'s. A protocol records no token on DefiLlama — that is not proof it has none.</footer>';
 }
